@@ -1,0 +1,443 @@
+Program.Sub.ScreenSU.Start
+Gui.frmCommitments..Create
+Gui.frmCommitments..Caption("Commitments")
+Gui.frmCommitments..Size(9225,5520)
+Gui.frmCommitments..MinX(0)
+Gui.frmCommitments..MinY(0)
+Gui.frmCommitments..Position(0,0)
+Gui.frmCommitments..BackColor(-2147483633)
+Gui.frmCommitments..MousePointer(0)
+Gui.frmCommitments..Event(UnLoad,frmCommitments_UnLoad)
+Gui.frmCommitments.GsGcDemand.Create(GsGridControl)
+Gui.frmCommitments.GsGcDemand.Size(9210,4650)
+Gui.frmCommitments.GsGcDemand.Position(0,0)
+Gui.frmCommitments.GsGcDemand.Event(RowCellClick,GsGcDemand_RowCellClick)
+Gui.frmCommitments.GsGcDemand.Anchor(15)
+Gui.frmCommitments.GsGcDemand.Event(CellValueChanged,GsGcDemand_CellValueChanged)
+Gui.frmCommitments.cmdIssue.Create(Button)
+Gui.frmCommitments.cmdIssue.Size(2025,345)
+Gui.frmCommitments.cmdIssue.Position(0,4650)
+Gui.frmCommitments.cmdIssue.Caption("Issue to Selected")
+Gui.frmCommitments.cmdIssue.Event(Click,cmdIssue_Click)
+Gui.frmCommitments.cmdIssue.Anchor(10)
+Gui.frmCommitments.txtAvail.Create(TextBox,"",True,1215,300,0,7995,4650,True,2,"Arial",8,-2147483643,1)
+Gui.frmCommitments.lblAvail.Create(Label,"Qty Available to Issue:",True,1710,255,0,6225,4740,True,1,"Arial",8,-2147483633,0)
+Gui.frmCommitments.lblAvail.DefaultValue("")
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+V.Global.fQtyAvail.Declare
+Program.External.Include.Library("450101.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+'TJS, November 2020
+'Customer: Carriere Industrial Supply
+
+'BUSINESS CASE The customer uses standard cost for inventory and bin detail for tracking. Because of this, the WIP to FG process for BOMs are quite tedious and they're looking for a way to save a few clicks in the process. Component parts can be both make to stock, or make to job. Make to stock components may be sold from inventory as is, or could be a component within a larger BOM.  Making sure that BOM components have been issued before a work order is closed is adding time to the WIP to FG process as well.
+
+'They would like GSS to streamline their process using some default values and identifying what needs to be addressed in a work order before its WIP to FG.
+
+'SOLUTION
+
+'CUSTOMER REQUIREMENT
+
+'Populate the "Stocking BIN" on the inventory master for all existing parts.
+
+'Turn on the company option:  System Support > Administration > C.O. Advanced >> Manufacturing ||  Place Finished Goods in Stocking Bin on Inventory Master
+
+'GSS
+
+'Inventory:  Create a script on the post save hook of the inventory master to make sure that the stocking bin has been populated.  if it hasn't been populated, set the stocking bin to "ZHOME".
+
+'WIP to FG:  On the pre-save hook 16503 and the script 1 hook 16512 of the WIP to FG screen, check the work order for materials that have not been issued or closed.  Display the issue material screen so the user can issue what's still required.
+
+'On the post save hook 16504, check the job commitments table and see if the part that was just closed has a work order requirement.  If yes, display a grid of all work orders where this part is required.  Allow the user to select which work order(s) to apply the material to, and allow the user to enter the quantity to issue per work order.  Clicking save would issue those parts to the work orders selected by the user.
+
+'Hooks: 10185 - Inventory Post-Save.  16504 - WIP2FG Post-Save
+
+F.Intrinsic.Control.SelectCase(V.Caller.Hook)
+	F.Intrinsic.Control.Case(10185)
+		F.Intrinsic.Control.CallSub(StockBin)
+	F.Intrinsic.Control.Case(16504)
+		F.Intrinsic.Control.CallSub(SetIcon)
+		F.Intrinsic.Control.CallSub(IssueToJob)
+F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.StockBin.Start
+F.Intrinsic.Control.Try
+V.Local.sBin.Declare
+V.Local.sStockBin.Declare
+V.Local.sPN.Declare
+V.Local.sRev.Declare
+V.Local.sPNRev.Declare
+V.Local.sSQL.Declare
+
+V.Local.sPN.Set(V.Passed.000007)
+V.Local.sRev.Set(V.Passed.000008)
+
+F.Intrinsic.String.RPad(V.Local.sPN," ",17,V.Local.sPN)
+F.Intrinsic.String.Build("{0}{1}",V.Local.sPN,V.Local.sRev,V.Local.sPNRev)
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.Intrinsic.String.Build("Select BIN from V_INVENTORY_MSTR where PART = '{0}' and LOCATION = '{1}'",V.Local.sPNRev,V.Passed.000009,V.Local.sBin)
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sBin,V.Local.sBin)
+
+F.Intrinsic.String.Build("Select STOCK_BIN from V_INVENTORY_MST3 where PART = '{0}' and LOCATION = '{1}'",V.Local.sPNRev,V.Passed.000009,V.Local.sStockBin)
+F.ODBC.Connection!conts.ExecuteAndReturn(V.Local.sStockBin,V.Local.sStockBin)
+
+F.Intrinsic.Control.If(V.Local.sBin.Trim,=,"","AND",V.Local.sStockBin.Trim,=,"")
+	F.Intrinsic.String.Build("Update INVENTORY_MST3 set STOCK_BIN = 'ZHOME' where PART = '{0}' and LOCATION = '{1}'",V.Local.sPNRev,V.Passed.000009,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+	
+	F.Intrinsic.String.Build("Update INVENTORY_MSTR set BIN = 'ZHOME' where PART = '{0}' and LOCATION = '{1}'",V.Local.sPNRev,V.Passed.000009,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.sStockBin.Trim,=,"","AND",V.Local.sBin.Trim,<>,"")
+	F.Intrinsic.String.Build("Update INVENTORY_MST3 set STOCK_BIN = '{2}' where PART = '{0}' and LOCATION = '{1}'",V.Local.sPNRev,V.Passed.000009,V.Local.sBin.Trim,V.Local.sSQL)
+	F.ODBC.Connection!conts.Execute(V.Local.sSQL)
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.StockBin.End
+
+Program.Sub.IssueToJob.Start
+F.Intrinsic.Control.Try
+V.Local.sPN.Declare
+V.Local.sRev.Declare
+V.Local.sPNRev.Declare
+V.Local.sSQL.Declare
+V.Local.sMsg.Declare
+V.Local.sWO.Declare
+V.Local.sSuff.Declare
+V.Local.sCaption.Declare
+
+V.Local.sPN.Set(V.Passed.000009)
+V.Local.sRev.Set(V.Passed.000030)
+V.Global.fQtyAvail.Set(V.Passed.000013)
+
+F.Intrinsic.Control.If(V.Passed.000004.Trim,<>,"")
+	F.Intrinsic.String.Build("{0}-{1}",V.Passed.000003.Trim,V.Passed.000004.Trim,V.Local.sWO)
+F.Intrinsic.Control.Else
+	V.Local.sWO.Set(V.Passed.000003.Trim)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.RPad(V.Local.sPN," ",17,V.Local.sPN)
+F.Intrinsic.String.Build("{0}{1}",V.Local.sPN,V.Local.sRev,V.Local.sPNRev)
+
+F.Intrinsic.Control.If(V.DataTable.dtIssue.Exists)
+	F.Data.DataTable.Close("dtIssue")
+F.Intrinsic.Control.EndIf
+
+F.ODBC.Connection!conts.OpenCompanyConnection
+F.Intrinsic.String.Build("Select Cast(0 as Bit) as SELECTION,0 as QTY_TO_ISSUE,0 as QTY_AVAILABLE,RTRIM(PART) as PART,LOCATION,JOB,SUFFIX,SEQUENCE,DATE_DUE,QTY_COMMITTED from V_JOB_COMMITMENTS where PART = '{0}' Order by JOB",V.Local.sPNRev,V.Local.sSQL)
+F.Data.DataTable.CreateFromSQL("dtIssue","conts",V.Local.sSQL,True)
+F.ODBC.Connection!conts.Close
+
+F.Intrinsic.Control.If(V.DataTable.dtIssue.RowCount,=,0)
+	F.Intrinsic.String.Build("No commitments found for {0}.",V.Local.sPNRev,V.Local.sMsg)
+	F.Intrinsic.UI.Msgbox(V.Local.sMsg,"Notice")
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+F.Data.DataTable.SetValue("dtIssue",-1,"QTY_AVAILABLE",V.Global.fQtyAvail)
+Gui.frmCommitments.txtAvail.Text(V.Global.fQtyAvail)
+
+Gui.frmCommitments.GsGcDemand.AddGridviewFromDatatable("gvIssue","dtIssue")
+Gui.frmCommitments.GsGcDemand.MainView("gvIssue")
+
+Gui.frmCommitments.GsGcDemand.SuspendLayout
+
+Gui.frmCommitments.GsGcDemand.SetGridviewProperty("gvIssue","MultiSelect",True)
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","PART","Visible",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","PART","AllowShowHide",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_AVAILABLE","Visible",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_AVAILABLE","AllowShowHide",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","LOCATION","Visible",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","LOCATION","AllowShowHide",False)
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","HeaderFontBold",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","HeaderFontBold",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","HeaderFontBold",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","HeaderFontBold",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","HeaderFontBold",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","HeaderFontBold",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","HeaderFontBold",True)
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","HeaderBackColor",V.Color.PRI-GSS-00)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","HeaderBackColor",V.Color.PRI-GSS-00)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","HeaderBackColor",V.Color.PRI-GSS-00)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","HeaderBackColor",V.Color.PRI-GSS-00)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","HeaderBackColor",V.Color.PRI-GSS-00)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","HeaderBackColor",V.Color.PRI-GSS-00)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","HeaderBackColor",V.Color.PRI-GSS-00)
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","HeaderForeColor",V.Color.White)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","HeaderForeColor",V.Color.White)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","HeaderForeColor",V.Color.White)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","HeaderForeColor",V.Color.White)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","HeaderForeColor",V.Color.White)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","HeaderForeColor",V.Color.White)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","HeaderForeColor",V.Color.White)
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","HeaderHAlignment","Center")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","HeaderHAlignment","Center")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","HeaderHAlignment","Center")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","HeaderHAlignment","Center")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","HeaderHAlignment","Center")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","HeaderHAlignment","Center")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","HeaderHAlignment","Center")
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","Caption","Select")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","Caption","Qty To Issue")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","Caption","Job")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","Caption","Suffix")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","Caption","Seq")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","Caption","Date Due")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","Caption","Qty Req")
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","AllowEdit",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","ReadOnly",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","AllowEdit",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","ReadOnly",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","AllowEdit",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","ReadOnly",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","AllowEdit",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","ReadOnly",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","AllowEdit",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","ReadOnly",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","AllowEdit",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","ReadOnly",True)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","AllowEdit",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","ReadOnly",True)
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","AllowFocus",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","AllowFocus",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","AllowFocus",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","AllowFocus",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","AllowFocus",False)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","AllowFocus",False)
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","Width",50)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","JOB","Width",50)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SUFFIX","Width",50)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SEQUENCE","Width",50)
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","Width",50)
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","DATE_DUE","DisplayCustomDateTime","d")
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","CellHAlignment","Center")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","CellHAlignment","Center")
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_TO_ISSUE","CellBackColor","LightYellow")
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","SELECTION","CellBackColor","LightYellow")
+
+Gui.frmCommitments.GsGcDemand.SetColumnProperty("gvIssue","QTY_COMMITTED","DisplayCustomNumeric","n0")
+
+Gui.frmCommitments.GsGcDemand.ResumeLayout
+
+F.Intrinsic.String.Build("Work Order {0}, demand for Part "{1}" ",V.Local.sWO.Trim,V.Local.sPNRev.Trim,V.Local.sCaption)
+
+Gui.frmCommitments..Caption(V.Local.sCaption)
+
+Gui.frmCommitments..Show
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.IssueToJob.End
+
+Program.Sub.GsGcDemand_RowCellClick.Start
+F.Intrinsic.Control.Try
+V.Local.bSelect.Declare
+
+F.Intrinsic.Control.SelectCase(V.Args.COLUMN)
+	F.Intrinsic.Control.Case("SELECTION")
+		Gui.frmCommitments.GsGcDemand.GetCellValueByColumnName("gvIssue","SELECTION",V.Args.RowIndex,V.Local.bSelect)
+		F.Intrinsic.Control.If(V.Local.bSelect,=,False)
+			F.Data.DataTable.SetValue("dtIssue",V.Args.RowIndex,"SELECTION",True)
+		F.Intrinsic.Control.Else
+			F.Data.DataTable.SetValue("dtIssue",V.Args.RowIndex,"SELECTION",False)
+		F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GsGcDemand_RowCellClick.End
+
+Program.Sub.GsGcDemand_CellValueChanged.Start
+F.Intrinsic.Control.Try
+V.Local.fQtyIssue.Declare
+V.Local.fQtyReq.Declare
+V.Local.fQtyAvail.Declare
+V.Local.iCnt.Declare
+V.Local.iQtyAvail.Declare
+
+F.Intrinsic.Control.SelectCase(V.Args.COLUMN)
+	F.Intrinsic.Control.Case("QTY_TO_ISSUE")
+		Gui.frmCommitments.GsGcDemand.GetCellValueByColumnName("gvIssue","QTY_TO_ISSUE",V.Args.RowIndex,V.Local.fQtyIssue)
+		Gui.frmCommitments.GsGcDemand.GetCellValueByColumnName("gvIssue","QTY_COMMITTED",V.Args.RowIndex,V.Local.fQtyReq)
+		
+		F.Intrinsic.Control.If(V.Local.fQtyIssue,>,0)
+			F.Data.DataTable.SetValue("dtIssue",V.Args.RowIndex,"SELECTION",True)
+		F.Intrinsic.Control.ELse
+			F.Data.DataTable.SetValue("dtIssue",V.Args.RowIndex,"SELECTION",False)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.Control.If(V.Local.fQtyIssue,>,V.Local.fQtyReq)
+			F.Intrinsic.UI.Msgbox("Cannot issue more than required","Warning!")
+			F.Data.DataTable.SetValue("dtIssue",V.Args.RowIndex,"QTY_TO_ISSUE",0)
+			F.Data.DataTable.SetValue("dtIssue",V.Args.RowIndex,"SELECTION",False)
+		F.Intrinsic.Control.EndIf
+		
+		V.Local.fQtyAvail.Set(V.Global.fQtyAvail)
+		
+		F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtIssue.RowCount--,1)
+			V.Local.fQtyIssue.Set(V.DataTable.dtIssue(V.Local.iCnt).QTY_TO_ISSUE!FieldVal)
+			
+			F.Intrinsic.Math.Sub(V.Local.fQtyAvail,V.Local.fQtyIssue,V.Local.fQtyAvail)
+			
+			F.Intrinsic.Control.If(V.Local.fQtyAvail,<,0)
+				F.Intrinsic.UI.Msgbox("Cannot issue more than available","Warning!")
+				F.Data.DataTable.SetValue("dtIssue",V.Args.RowIndex,"QTY_TO_ISSUE",0)
+				F.Data.DataTable.SetValue("dtIssue",V.Args.RowIndex,"SELECTION",False)
+				Gui.frmCommitments.txtAvail.Text(V.DataTable.dtIssue(0).QTY_AVAILABLE!FieldVal)
+				F.Intrinsic.Control.ExitSub
+			F.Intrinsic.Control.Else
+				F.Data.DataTable.SetValue("dtIssue",-1,"QTY_AVAILABLE",V.Local.fQtyAvail)
+				Gui.frmCommitments.txtAvail.Text(V.Local.fQtyAvail)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.Next(V.Local.iCnt)
+F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Control.ExitSub
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.GsGcDemand_CellValueChanged.End
+
+Program.Sub.cmdIssue_Click.Start
+F.Intrinsic.Control.Try
+V.Local.iCnt.Declare
+V.Local.sPart.Declare
+V.Local.sRev.Declare
+V.Local.sMsg.Declare
+V.Local.iQty.Declare
+V.Local.iQtyRem.Declare
+V.Local.iRet.Declare
+
+V.Local.iQtyRem.Set(V.Screen.frmCommitments!txtAvail.Text)
+
+F.Intrinsic.Control.If(V.Local.iQtyRem,>,0)
+	F.Intrinsic.String.Build("A quantity of {0} remain available for issue.{1}These will remain in the stocking bin (ZHOME).",V.Local.iQtyRem,V.Ambient.NewLine,V.Local.sMsg)
+	F.Intrinsic.UI.Msgbox(V.Local.sMsg,"Please note:",1,V.Local.iRet)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.iRet,=,2)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+Gui.frmCommitments..Visible(False)
+
+F.Data.DataView.Create("dtIssue","dvIssue",22,"SELECTION = 'True'","")
+
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataView.dtIssue!dvIssue.RowCount--,1)
+	F.Intrinsic.String.RPad(V.DataView.dtIssue!dvIssue(V.Local.iCnt).PART!FieldValTrim," ",20,V.Local.sPart)
+	F.Intrinsic.String.Right(V.Local.sPart,3,V.Local.sRev)
+	F.Intrinsic.String.Left(V.Local.sPart,17,V.Local.sPart)
+	
+	V.Local.iQty.Set(V.DataView.dtIssue!dvIssue(V.Local.iCnt).QTY_TO_ISSUE!FieldValLong)
+	F.Intrinsic.Math.Mult(V.Local.iQty,10000,V.Local.iQty)
+	
+	F.Data.DataTable.AddRow("450101","PART",V.Local.sPart.Trim,"REV",V.Local.sRev.Trim,"LOCATION",V.DataView.dtIssue!dvIssue(V.Local.iCnt).LOCATION!FieldValTrim,"QUANTITY",V.Local.iQty,"BIN","ZHOME","WONumber",V.DataView.dtIssue!dvIssue(V.Local.iCnt).JOB!FieldValTrim,"WOSuffix",V.DataView.dtIssue!dvIssue(V.Local.iCnt).SUFFIX!FieldValTrim,"WOSeq",V.DataView.dtIssue!dvIssue(V.Local.iCnt).SEQUENCE!FieldValTrim)
+F.Intrinsic.Control.Next(V.Local.iCnt)
+
+F.Intrinsic.Control.CallSub(450101Async)
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.cmdIssue_Click.End
+
+Program.Sub.SetIcon.Start
+F.Intrinsic.Control.Try
+V.Local.sForm.Declare
+V.Local.bExists.Declare
+V.Local.sIcon.Declare
+V.Local.iCounter.Declare
+
+F.Intrinsic.String.Build("{0}\ART\gss2.ico",V.Caller.GlobalDir,v.Local.sIcon)
+F.Intrinsic.File.Exists(V.Local.sIcon, V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists.Not)
+    F.Intrinsic.String.Build("{0}\GAB\GAS\gss2.ico",V.Caller.PluginsDir,v.Local.sIcon)
+    F.Intrinsic.File.Exists(V.Local.sIcon, V.Local.bExists)
+    F.Intrinsic.Control.If(V.Local.bExists.Not)
+        F.Intrinsic.Control.ExitSub
+    F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.UI.GetFormList(V.Local.sForm)
+F.Intrinsic.String.Split(V.Local.sForm, "*!*", V.Local.sForm)
+
+F.Intrinsic.Control.For(V.Local.iCounter, 0, V.Local.sForm.UBound, 1)
+    Gui.[V.Local.sForm(V.Local.iCounter)]..Icon(V.Local.sIcon)
+F.Intrinsic.Control.Next(V.Local.iCounter)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.SetIcon.End
+
+Program.Sub.frmCommitments_UnLoad.Start
+F.Intrinsic.Control.Try
+V.Local.sMsg.Declare
+V.Local.iQty.Declare
+V.Local.iQtyRem.Declare
+V.Local.iRet.Declare
+
+V.Local.iQtyRem.Set(V.Screen.frmCommitments!txtAvail.Text)
+
+F.Intrinsic.Control.If(V.Local.iQtyRem,>,0)
+	F.Intrinsic.String.Build("A quantity of {0} remain available for issue.{1}These will remain in the stocking bin (ZHOME).",V.Local.iQtyRem,V.Ambient.NewLine,V.Local.sMsg)
+	F.Intrinsic.UI.Msgbox(V.Local.sMsg,"Please note:",1,V.Local.iRet)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.iRet,=,2)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.CallSub(Error,"SubRoutine",V.Ambient.CurrentSubroutine,"eNumber",V.Ambient.ErrorNumber,"eDescription",V.Ambient.ErrorDescription)
+F.Intrinsic.Control.EndTry
+Program.Sub.frmCommitments_UnLoad.End
+
+Program.Sub.Error.Start
+V.Local.sError.Declare
+V.Local.iRet.Declare
+V.Local.sSep.Declare
+
+F.Intrinsic.String.Build("-------------------------------------------------------------------------------------",,V.Local.sSep)
+F.Intrinsic.String.Build("({5}-{6}){0}{7}{0}Project: {4}{0}{7}{0}Sub: {1}{0}Error: {2}, {3}", V.Ambient.NewLine, V.Args.SubRoutine, V.Args.eNumber, V.Args.eDescription,V.Caller.ScriptFile,V.Ambient.Date, V.Ambient.Time,V.Local.sSep,V.Local.sError)
+F.Intrinsic.UI.Msgbox(V.Local.sError,"Error",V.Local.iRet)
+Program.Sub.Error.End
